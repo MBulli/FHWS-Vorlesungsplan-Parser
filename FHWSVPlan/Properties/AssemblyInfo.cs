@@ -10,9 +10,9 @@ using System.Windows;
 [assembly: AssemblyTitle("FHWSVPlan")]
 [assembly: AssemblyDescription("")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("")]
+[assembly: AssemblyCompany("MBulli")]
 [assembly: AssemblyProduct("FHWSVPlan")]
-[assembly: AssemblyCopyright("Copyright ©  2013")]
+[assembly: AssemblyCopyright("Copyright MBulli©  2013")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 
