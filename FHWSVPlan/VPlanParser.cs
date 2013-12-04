@@ -11,59 +11,27 @@ using WebBrowser = System.Windows.Controls.WebBrowser;
 
 namespace FHWSVPlan
 {
-    struct VPlanElementRect
-    {
-        public readonly int Left;
-        public readonly int Right;
-        public readonly int Top;
-        public readonly int Bottom;
-
-        public VPlanElementRect(dynamic jsResult)
-        {
-            if (jsResult == null)
-                throw new ArgumentNullException("jsResult");
-
-            Left = jsResult.left;
-            Right = jsResult.right;
-            Top = jsResult.top;
-            Bottom = jsResult.bottom;
-        }
-    }
-
-    class VPlanMetadata
-    {
-        public readonly int FileVersion;
-
-        public DateTime LastUpdated;
-        public DateTime Created;
-
-        public VPlanMetadata()
-        {
-            FileVersion = 1;
-        }
-    }
-
-    class VPlanReading
-    {
-        public string HtmlNodeId; // only for debug
-
-        public DateTime Start;
-        public DateTime End;
-
-        public string Type;
-        public string Title;
-        public string CourseID;
-        public string Lecturer;
-        public string Room;
-
-        public override string ToString()
-        {
-            return string.Format("{0} - {1}; {2} {3}; {4}; {5}; [{6}]", Start, End, Type, Title, Lecturer, Room, HtmlNodeId);
-        }
-    }
-
     class VPlanParser
     {
+        private struct HtmlElementRect
+        {
+            public readonly int Left;
+            public readonly int Right;
+            public readonly int Top;
+            public readonly int Bottom;
+
+            public HtmlElementRect(dynamic jsResult)
+            {
+                if (jsResult == null)
+                    throw new ArgumentNullException("jsResult");
+
+                this.Left = jsResult.left;
+                this.Right = jsResult.right;
+                this.Top = jsResult.top;
+                this.Bottom = jsResult.bottom;
+            }
+        }
+
         private const string fileUrl = "http://www.welearn.de/fileadmin/share/vlplan/BaInf3_2013ws.html";
         private const string fileUrl2 = "http://www.welearn.de/fileadmin/share/vlplan/BaWinf2_2013ws.html";
         private const string fileUrl3 = "http://www.welearn.de/fileadmin/share/vlplan/BaInf7TI_2013ws.html";
@@ -74,7 +42,8 @@ namespace FHWSVPlan
 
         private WebBrowser webBrowser;
         private HtmlDocument htmlDoc;
-        private string documentFilename;
+        private VPlanRoot result;
+        private Action<VPlanRoot> sucessCallback;
 
         public VPlanParser(WebBrowser browser)
         {
@@ -84,15 +53,19 @@ namespace FHWSVPlan
             webBrowser = browser;
         }
 
-        public void Start()
+        public void Start(Action<VPlanRoot> sucessCallback)
         {
+            this.sucessCallback = sucessCallback;
+
             ParseVPlanFromUrl(new Uri(fileUrl));
         }
 
         private void ParseVPlanFromUrl(Uri url)
         {
-            htmlDoc = DownloadHtmlDocument(url);
-            documentFilename = System.IO.Path.GetFileNameWithoutExtension(url.AbsolutePath);
+            this.result = new VPlanRoot();
+
+            this.htmlDoc = DownloadHtmlDocument(url);
+            this.result.Header.Name = System.IO.Path.GetFileNameWithoutExtension(url.AbsolutePath);
 
             InjectJavascriptFunction(htmlDoc);
 
@@ -119,23 +92,25 @@ namespace FHWSVPlan
                 throw new Exception();
 
             // parse footer
-            VPlanMetadata metaData = ParseFooter(footer);
-
+            ParseFooter(footer, this.result.Header);
 
             // parse readings
-            List<VPlanReading> readings = new List<VPlanReading>();
-            Dictionary<string, string> courseIdMap = new Dictionary<string, string>();
-
             for (int i = 0; i < tableNodes.Count; i++)
             {
                 foreach (var newReading in ParseWeek(tableNodes[i], headlines1[i], headlines2[i]))
                 {
-                    readings.Add(newReading);
+                    this.result.Readings.Add(newReading);
 
-                    if (!courseIdMap.ContainsValue(newReading.Title))
+                    string hash = MD5Hash(newReading.Title);
+
+                    if (!this.result.CourseIdMap.ContainsKey(hash))
                     {
-                        string hash = MD5Hash(newReading.Title);
-                        courseIdMap.Add(hash, newReading.Title);
+                        this.result.CourseIdMap.Add(hash, newReading.Title);
+                        newReading.CourseID = hash;
+                        newReading.Title = null;
+                    }
+                    else
+                    {
                         newReading.CourseID = hash;
                         newReading.Title = null;
                     }
@@ -143,18 +118,22 @@ namespace FHWSVPlan
             }
 
             // write all in json file
-            var jsonObj = new { metadata = metaData, courses = courseIdMap, readings = readings };
-            SerializeCourses(jsonObj);
+            SerializeCourses(this.result);
+
+            if (this.sucessCallback != null)
+	        {
+		        this.sucessCallback(this.result);
+	        }
         }
 
-        private void SerializeCourses(object obj)
+        private void SerializeCourses(VPlanRoot root)
         {
             Newtonsoft.Json.JsonSerializerSettings set = new Newtonsoft.Json.JsonSerializerSettings();
             set.DateFormatString = dateFormatRfc3339;
             set.NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore;
 
-            string json = Newtonsoft.Json.JsonConvert.SerializeObject(obj, Newtonsoft.Json.Formatting.Indented, set);
-            System.IO.File.WriteAllText(string.Format("{0}.json", documentFilename), json);
+            string json = Newtonsoft.Json.JsonConvert.SerializeObject(root, Newtonsoft.Json.Formatting.Indented, set);
+            System.IO.File.WriteAllText(string.Format("{0}.json", this.result.Header.Name), json);
         }
 
         private IEnumerable<VPlanReading> ParseWeek(HtmlNode table, HtmlNode w1, HtmlNode w2)
@@ -181,7 +160,7 @@ namespace FHWSVPlan
                 weekStart = new DateTime(weekEnd.Year, tmp.Month, tmp.Day);
             }
 
-            VPlanElementRect[] courseRanges = FindColumnRanges(table);
+            HtmlElementRect[] courseRanges = FindColumnRanges(table);
 
             foreach (var kvp in FindAllReadingNodesInWeek(table))
             {
@@ -240,7 +219,7 @@ namespace FHWSVPlan
             }
         }
 
-        private VPlanElementRect[] FindColumnRanges(HtmlNode table)
+        private HtmlElementRect[] FindColumnRanges(HtmlNode table)
         {
             var tr = table.SelectSingleNode("//tr");
             var colHeader = from n in tr.ChildNodes
@@ -250,7 +229,7 @@ namespace FHWSVPlan
             if (colHeader.Count() != 6)
                 throw new Exception("Expected 6 col headers");
 
-            List<VPlanElementRect> result = new List<VPlanElementRect>();
+            List<HtmlElementRect> result = new List<HtmlElementRect>();
 
             foreach (HtmlNode td in colHeader)
             {
@@ -260,25 +239,20 @@ namespace FHWSVPlan
 
                 dynamic jsResult = webBrowser.InvokeScript(jsFxElementBoundsByXPath, xpath);
 
-                result.Add(new VPlanElementRect(jsResult));
+                result.Add(new HtmlElementRect(jsResult));
             }
 
             return result.ToArray();
         }
 
-        private VPlanMetadata ParseFooter(HtmlNode footer)
+        private static void ParseFooter(HtmlNode footer, VPlanMetadata result)
         {
-            VPlanMetadata result = new VPlanMetadata();
-            result.Created = DateTime.Now;
-
             string txt = footer.ChildNodes[2].InnerText;
             var matches = Regex.Matches(txt, @"[0-9]{2}\.[0-9]{2}\.[0-9]{4}, [0-9]{1,2}:[0-9]{2}");
 
             string updatedStr = matches[matches.Count - 1].Value;
             var tmp = DateTime.Parse(updatedStr);
             result.LastUpdated = new DateTime(tmp.Ticks, DateTimeKind.Local);
-
-            return result;
         }
 
         private static bool LooksLikeRoomString(string s)

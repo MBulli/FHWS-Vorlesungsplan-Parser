@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -25,19 +26,14 @@ namespace FHWSVPlan
             InitializeComponent();
         }
 
-
-        private void WebBrowser_LoadCompleted(object sender, NavigationEventArgs e)
-        {
-            //
-        }
-
         private void Button_Click_1(object sender, RoutedEventArgs e)
         {
             VPlanParser p = new VPlanParser(browser);
-            p.Start();
-
-//            browser.InvokeScript("test", "zf15965");
-            //browser.InvokeScript("test", "zf14569");
+            p.Start((vplan) =>
+            {
+                string iCalStr = iCalendarGenerator.CreateCalendarString(vplan);
+                File.WriteAllText(string.Format("{0}.ics", vplan.Header.Name), iCalStr);
+            });
         }
     }
 }
