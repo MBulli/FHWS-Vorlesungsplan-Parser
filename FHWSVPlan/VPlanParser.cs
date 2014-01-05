@@ -30,13 +30,18 @@ namespace FHWSVPlan
                 this.Top = jsResult.top;
                 this.Bottom = jsResult.bottom;
             }
+
+            public override string ToString()
+            {
+                return string.Format("{0} {1} {2} {3}", Top, Left, Bottom, Right);
+            }
         }
 
         private const string fileUrl = "http://www.welearn.de/fileadmin/share/vlplan/BaInf3_2013ws.html";
         private const string fileUrl2 = "http://www.welearn.de/fileadmin/share/vlplan/BaWinf2_2013ws.html";
         private const string fileUrl3 = "http://www.welearn.de/fileadmin/share/vlplan/BaInf7TI_2013ws.html";
-        
-        private const string jsFxName = "test";
+
+        private const string jsFxElementBoundsByID = "elementBoundsByID";
         private const string jsFxElementBoundsByXPath = "elementBoundsByXPath";
         private const string dateFormatRfc3339 = "yyyy-MM-dd'T'HH:mm:ssK"; // RFC-3339 format string
 
@@ -162,11 +167,20 @@ namespace FHWSVPlan
 
             HtmlElementRect[] courseRanges = FindColumnRanges(table);
 
+            Debug.WriteLine("Found course ranges for week {0}", weekStart);
+            for (int i = 0; i < courseRanges.Length; i++)
+            {
+                Debug.WriteLine("{0} [{1} {2}]", weekStart.AddDays(i).DayOfWeek, courseRanges[i].Left, courseRanges[i].Right);
+            }
+           
             foreach (var kvp in FindAllReadingNodesInWeek(table))
             {
+                Debug.WriteLine("Process reading " + kvp.Key);
+
                 VPlanReading reading = new VPlanReading();
 
-                int jsResultXPos = (int)webBrowser.InvokeScript(jsFxName, kvp.Key);
+                HtmlElementRect bounds = GetElementBoundsWithId(kvp.Key);
+                int jsResultXPos = bounds.Left;
                 int dayOffset = -1;
 
                 for (int i = 0; i < courseRanges.Length; i++)
@@ -221,10 +235,9 @@ namespace FHWSVPlan
 
         private HtmlElementRect[] FindColumnRanges(HtmlNode table)
         {
-            var tr = table.SelectSingleNode("//tr");
-            var colHeader = from n in tr.ChildNodes
-                            where n.GetAttributeValue("class", null) == "t"
-                            select n;
+            var colHeader = from td in table.SelectNodes("tr/td")
+                            where td.GetAttributeValue("class", null) == "t"
+                            select td;
 
             if (colHeader.Count() != 6)
                 throw new Exception("Expected 6 col headers");
@@ -237,12 +250,23 @@ namespace FHWSVPlan
                 xpath = xpath.Replace("/html[1]/body[1]", "/html/body");
                 xpath = xpath.Insert(xpath.IndexOf("/tr"), "/tbody");
 
-                dynamic jsResult = webBrowser.InvokeScript(jsFxElementBoundsByXPath, xpath);
-
-                result.Add(new HtmlElementRect(jsResult));
+                HtmlElementRect jsResult = GetElementBoundsWithXPath(xpath);
+                result.Add(jsResult);
             }
 
             return result.ToArray();
+        }
+
+        private HtmlElementRect GetElementBoundsWithXPath(string xpath)
+        {
+            dynamic result = webBrowser.InvokeScript(jsFxElementBoundsByXPath, xpath);
+            return new HtmlElementRect(result);
+        }
+
+        private HtmlElementRect GetElementBoundsWithId(string id)
+        {
+            dynamic result = webBrowser.InvokeScript(jsFxElementBoundsByID, id);
+            return new HtmlElementRect(result);
         }
 
         private static void ParseFooter(HtmlNode footer, VPlanMetadata result)
@@ -291,14 +315,14 @@ namespace FHWSVPlan
 
                     function {1} (id) {{
                             var e = document.getElementById(id);
-                            return e.getBoundingClientRect().left;
+                            return e.getBoundingClientRect();
                     }};	
 
                     function {2} (xpath) {{
 		                    var e = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
                             return e.getBoundingClientRect();
                     }};	
-                </script>", Properties.Resources.XPath, jsFxName, jsFxElementBoundsByXPath);
+                </script>", Properties.Resources.XPath, jsFxElementBoundsByID, jsFxElementBoundsByXPath);
 
 
 
